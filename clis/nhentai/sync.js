@@ -151,6 +151,12 @@ export async function enumerateFavorites(page, state, options = {}) {
     if (pageNo <= maxPages && delayMs) await sleep(delayMs);
   }
 
+  // Capped by --max-favorites-pages: mark the enumeration complete so the next run
+  // does not log "enumerating from page 21 (max 20)" and stall on an empty loop.
+  // --refresh still forces a full re-enumeration.
+  state.favorites.complete = true;
+  state.favorites.capped = true;
+  state.favorites.next_page = maxPages + 1;
   save?.();
-  return { incomplete: false, pagesRead, reachedEnd: false, capped: pageNo > maxPages };
+  return { incomplete: false, pagesRead, reachedEnd: false, capped: true };
 }

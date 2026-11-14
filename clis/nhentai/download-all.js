@@ -6,6 +6,9 @@ import { enumerateFavorites, loadState, planBooks, saveState } from './sync.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const TRANSIENT_PAGE_RE =
+  /page not found|stale page identity|target closed|browser (?:has )?disconnected|session closed|context (?:was )?destroyed|detached/i;
+
 cli({
   site: 'nhentai',
   name: 'download-all',
@@ -128,7 +131,10 @@ cli({
     let syncedNow = 0;
     let consecutiveFailures = 0;
     let imagesDone = 0;
-    let stopped = queue.length === 0 ? 'nothing-to-do' : 'budget';
+    // `--retry-failed` with nothing to retry must not look like "still work left",
+    // otherwise an unconditional `while exit -eq 3` loop would spin forever.
+    const nothingToRetry = retryFailed && queue.length === 0;
+    let stopped = nothingToRetry ? 'nothing-to-retry' : queue.length === 0 ? 'nothing-to-do' : 'budget';
 
     const estimateBookSeconds = (book) => {
       const pages = Number(book.totalPages) || 100;
@@ -147,16 +153,33 @@ cli({
       }
 
       console.error(`[nhentai] ${book.id}: ${book.status}, ${book.have}/${book.totalPages ?? '?'} pages on disk`);
-      try {
-        const result = await downloadGallery(page, {
-          target: book.id,
-          output: outDir,
-          concurrency,
-          retries,
-          continueOnError: true,
-          maxFailures: 10,
-          delay: 120,
-        });
+      let result = null;
+      let lastError = null;
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        try {
+          result = await downloadGallery(page, {
+            target: book.id,
+            output: outDir,
+            concurrency,
+            retries,
+            continueOnError: true,
+            maxFailures: 10,
+            delay: 120,
+          });
+          lastError = null;
+          break;
+        } catch (error) {
+          lastError = error;
+          const message = String(error?.message || error);
+          // The Browser Bridge occasionally hands us a stale page identity after a
+          // long run; one immediate retry costs nothing and avoids losing a book.
+          if (attempt > 0 || !TRANSIENT_PAGE_RE.test(message)) break;
+          console.error(`[nhentai] ${book.id}: transient browser error, retrying once — ${message.slice(0, 160)}`);
+          await sleep(1500);
+        }
+      }
+
+      if (result) {
         imagesDone += result.saved.length;
         const status = result.failed.length || result.missing.length ? 'partial' : 'done';
         state.books[book.id] = {
@@ -169,17 +192,17 @@ cli({
         syncedNow += 1;
         consecutiveFailures = 0;
         stopped = 'queue-done';
-      } catch (error) {
+      } else {
         consecutiveFailures += 1;
         state.books[book.id] = {
           status: 'failed',
           pages: book.totalPages,
           have: book.have,
           failed: [],
-          error: String(error?.message || error).slice(0, 300),
+          error: String(lastError?.message || lastError).slice(0, 300),
           updated_at: new Date().toISOString(),
         };
-        console.error(`[nhentai] ${book.id}: FAILED — ${String(error?.message || error).slice(0, 200)}`);
+        console.error(`[nhentai] ${book.id}: FAILED — ${String(lastError?.message || lastError).slice(0, 200)}`);
         if (consecutiveFailures >= maxFailures) {
           stopped = 'consecutive-failures';
           save();
@@ -201,8 +224,8 @@ cli({
 
     let exitCode = 0;
     if (enumeration.incomplete) exitCode = 4;
-    else if (stopped === 'budget') exitCode = 3;
-    else if (finalCounts.partial || finalCounts.failed || finalCounts.pending) exitCode = 2;
+    else if (finalCounts.partial || finalCounts.failed) exitCode = 2;
+    else if (!nothingToRetry && finalCounts.pending > 0) exitCode = 3;
 
     state.stats = {
       ...state.stats,

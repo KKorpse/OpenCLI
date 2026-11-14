@@ -93,7 +93,25 @@ cli({
     let sawCards = false;
 
     for (let pageNo = startPage; pageNo <= lastPage; pageNo += 1) {
-      const snapshot = await loadPage(page, pageNo);
+      let snapshot;
+      try {
+        snapshot = await loadPage(page, pageNo);
+      } catch (error) {
+        if (error?.code === 'RATE_LIMITED') {
+          const read = rows.length;
+          throw new CliError(
+            'RATE_LIMITED',
+            read > 0
+              ? `nhentai: read ${read} favourite(s) from pages ${startPage}-${pageNo - 1}, but page ${pageNo} could not be loaded (rate limited or blocked).`
+              : `nhentai: favourites page ${pageNo} could not be loaded (rate limited or blocked).`,
+            read > 0
+              ? `Wait two or three minutes, then continue with \`opencli nhentai favorites --page ${pageNo} --all\`.`
+              : 'Wait two or three minutes, then retry. A blocked page is never reported as an empty favourites list.',
+            TEMPFAIL,
+          );
+        }
+        throw error;
+      }
 
       if (snapshot.cards.length === 0) {
         if (!sawCards) {
