@@ -526,6 +526,7 @@ export async function downloadBinary(url, proxy, { retries = 4, timeoutMs = 3000
   const candidates = proxy ? ['proxy', 'direct'] : ['direct'];
   const attempts = Math.max(1, Number(retries) || 1);
   const failures = [];
+  const attemptLog = [];
 
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     for (const mode of candidates) {
@@ -535,13 +536,24 @@ export async function downloadBinary(url, proxy, { retries = 4, timeoutMs = 3000
         status = res.status;
         if (status >= 200 && status < 300 && res.body?.length) return res.body;
         failures.push(`${mode}: HTTP ${status}`);
+        attemptLog.push({ mode, message: `HTTP ${status}` });
         if (status === 404) {
-          throw new CommandExecutionError(`nhentai: image not found (HTTP 404) — ${url}`, 'The gallery may have been removed from the image CDN.');
+          const notFound = new CommandExecutionError(`nhentai: image not found (HTTP 404) — ${url}`, 'The gallery may have been removed from the image CDN.');
+          notFound.attempts = attemptLog;
+          notFound.attemptCount = attemptLog.length;
+          throw notFound;
         }
       } catch (error) {
         if (error instanceof CommandExecutionError) throw error;
-        failures.push(`${mode}: ${String(error?.message || error)}`);
-        if (!isRetryable(error, status)) throw classifyDownloadFailure(url, failures);
+        const message = String(error?.message || error);
+        failures.push(`${mode}: ${message}`);
+        attemptLog.push({ mode, message });
+        if (!isRetryable(error, status)) {
+          const fatal = classifyDownloadFailure(url, failures);
+          fatal.attempts = attemptLog;
+          fatal.attemptCount = attemptLog.length;
+          throw fatal;
+        }
       }
     }
     if (attempt + 1 < attempts) {
@@ -549,7 +561,10 @@ export async function downloadBinary(url, proxy, { retries = 4, timeoutMs = 3000
       await sleep(backoff);
     }
   }
-  throw classifyDownloadFailure(url, failures);
+  const failure = classifyDownloadFailure(url, failures);
+  failure.attempts = attemptLog;
+  failure.attemptCount = attemptLog.length;
+  throw failure;
 }
 
 function classifyDownloadFailure(url, failures) {
@@ -593,6 +608,14 @@ export function saveBinaryAtomic(filePath, buffer) {
   const part = `${filePath}.part`;
   writeFileSync(part, buffer);
   renameSync(part, filePath);
+}
+
+/** Atomic JSON write: a killed process must never leave half a JSON document. */
+export function writeJsonAtomic(filePath, value, spacing = 2) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const tmp = `${filePath}.tmp`;
+  writeFileSync(tmp, JSON.stringify(value, null, spacing), 'utf8');
+  renameSync(tmp, filePath);
 }
 
 export function writeBinary(filePath, buffer) {

@@ -1,6 +1,16 @@
-﻿import { cli, Strategy } from '@jackwener/opencli/registry';
-import { AuthRequiredError, CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
+import { cli, Strategy } from '@jackwener/opencli/registry';
+import { AuthRequiredError, CliError, EmptyResultError } from '@jackwener/opencli/errors';
 import { collectFavoriteCards, favoritesUrl, galleryUrl, inspectPage, thumbUrl } from './api.js';
+
+const RATE_LIMIT_RE =
+  /rate limit|error 429|\b429\b|too many requests|just a moment|attention required|access denied|forbidden|challenge/i;
+const LIST_PAGE_RE = /favourites|favorites|log out|my favorites/i;
+const TEMPFAIL = 75;
+
+async function pause(page, seconds) {
+  if (typeof page.sleep === 'function') await page.sleep(seconds);
+  else await new Promise((r) => setTimeout(r, seconds * 1000));
+}
 
 /**
  * The page is server-rendered, but a reused automation tab can still answer the
@@ -12,10 +22,7 @@ async function readCards(page) {
   for (let attempt = 0; attempt < 4; attempt += 1) {
     snapshot = await collectFavoriteCards(page);
     if (snapshot.cards.length > 0) return snapshot;
-    if (attempt < 3) {
-      if (typeof page.sleep === 'function') await page.sleep(0.6);
-      else await new Promise((r) => setTimeout(r, 600));
-    }
+    if (attempt < 3) await pause(page, 0.6);
   }
   return snapshot;
 }
@@ -23,9 +30,11 @@ async function readCards(page) {
 /**
  * Load one favourites page.
  *
- * nhentai answers deep paging with an HTTP 200 "Error 429 - You're being rate
- * limited" page that contains no cards. Treating that as the end of the list is
- * what makes a 20-page account look like a 5-page one, so wait it out and retry.
+ * A 0-card page is ambiguous: nhentai serves an HTTP 200 "Error 429 - nhentai"
+ * page while rate limiting, and a connection reset renders chrome-error://. Both
+ * have no `.gallery` cards, so treating "0 cards" as "end of list" silently
+ * truncates a 20-page account to however many pages loaded before the limit.
+ * Only a still-recognisable favourites page with no cards counts as the end.
  */
 async function loadPage(page, pageNo, retries = 4) {
   let waitMs = 25000;
@@ -34,21 +43,24 @@ async function loadPage(page, pageNo, retries = 4) {
     const snapshot = await readCards(page);
     if (snapshot.cards.length > 0) return snapshot;
 
-    const state = await inspectPage(page);
-    if (/rate limit|error 429|\\b429\\b/i.test(`${state.title} ${state.text}`)) {
-      if (attempt === retries) {
-        throw new CommandExecutionError(
-          `nhentai: rate limited while reading favourites page ${pageNo}.`,
-          'nhentai allows roughly 10 page views per minute. Wait two or three minutes, then retry 鈥?or walk pages with --delay 8000.',
-        );
-      }
-      console.error(`[nhentai] page ${pageNo}: rate limited, waiting ${Math.round(waitMs / 1000)}s`);
-      if (typeof page.sleep === 'function') await page.sleep(waitMs / 1000);
-      else await new Promise((r) => setTimeout(r, waitMs));
-      waitMs = Math.min(Math.round(waitMs * 1.5), 60000);
-      continue;
+    const view = await inspectPage(page);
+    const merged = `${view.title} ${view.text}`;
+    const looksLikeList = LIST_PAGE_RE.test(view.text);
+    const suspicious = RATE_LIMIT_RE.test(merged) || view.connectionError || !looksLikeList;
+
+    if (!suspicious) return snapshot; // genuine end of the favourites list
+
+    if (attempt === retries) {
+      throw new CliError(
+        'RATE_LIMITED',
+        `nhentai: favourites page ${pageNo} could not be read (rate limited or blocked).`,
+        'This is temporary: wait two or three minutes, then retry. A partially read list is never returned as if it were complete.',
+        TEMPFAIL,
+      );
     }
-    return snapshot;
+    console.error(`[nhentai] page ${pageNo}: no galleries and the page looks blocked — waiting ${Math.round(waitMs / 1000)}s`);
+    await pause(page, waitMs / 1000);
+    waitMs = Math.min(Math.round(waitMs * 1.5), 60000);
   }
   return { cards: [], bodyText: '', hrefs: [] };
 }
@@ -84,19 +96,15 @@ cli({
       const snapshot = await loadPage(page, pageNo);
 
       if (snapshot.cards.length === 0) {
-        const state = await inspectPage(page);
-        if (state.connectionError) {
-          // Never report a truncated list as if it were the whole list.
-          throw new CommandExecutionError(
-            `nhentai: favourites page ${pageNo} did not load (connection closed).`,
-            `${rows.length} row(s) from pages ${startPage}-${pageNo - 1} were read, but the list is incomplete. This is usually an IP rate limit or a proxy hiccup: wait a few minutes, then retry with --page ${pageNo}.`,
-          );
-        }
-        if (!sawCards && /log in|log out|register|sign in/i.test(state.text)) {
-          throw new AuthRequiredError(
-            'nhentai: this browser session is not signed in, so the favourites list is unavailable.',
-            'Sign in at https://nhentai.net/login/ in the same Edge profile, then retry `opencli nhentai favorites`.',
-          );
+        if (!sawCards) {
+          const view = await inspectPage(page);
+          if (/log in|log out|register|sign in/i.test(view.text) && !LIST_PAGE_RE.test(view.text)) {
+            throw new AuthRequiredError(
+              'nhentai: this browser session is not signed in, so the favourites list is unavailable.',
+              'Sign in at https://nhentai.net/login/ in the same Edge profile, then retry `opencli nhentai favorites`.',
+            );
+          }
+          throw new EmptyResultError('nhentai: no favourite galleries were found on this account.', 'Favourite a gallery on nhentai.net, then retry.');
         }
         console.error(`[nhentai] page ${pageNo}: no galleries, stopping`);
         break;
@@ -119,10 +127,7 @@ cli({
 
       const hasNext = snapshot.hrefs.some((href) => href.includes(`page=${pageNo + 1}`));
       if (!hasNext) break;
-      if (delay) {
-        if (typeof page.sleep === 'function') await page.sleep(delay / 1000);
-        else await new Promise((r) => setTimeout(r, delay));
-      }
+      if (delay) await pause(page, delay / 1000);
     }
 
     if (!sawCards) {

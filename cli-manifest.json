@@ -24414,6 +24414,13 @@
         "help": "HTTP proxy for image downloads; auto-detected from env / Windows settings"
       },
       {
+        "name": "timeout",
+        "type": "int",
+        "default": 900,
+        "required": false,
+        "help": "Seconds before this command gives up (default 900)"
+      },
+      {
         "name": "retries",
         "type": "int",
         "default": 4,
@@ -24469,6 +24476,124 @@
     "type": "js",
     "modulePath": "nhentai/download.js",
     "sourceFile": "nhentai/download.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "download-all",
+    "description": "Sync every favourite gallery locally, resumable inside a time budget",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "output",
+        "type": "str",
+        "required": true,
+        "help": "Destination folder (required, e.g. D:\\nh)"
+      },
+      {
+        "name": "max-favorites-pages",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "How many favourites pages to enumerate (25 per page)"
+      },
+      {
+        "name": "budget",
+        "type": "int",
+        "default": 3000,
+        "required": false,
+        "help": "Seconds of work for this run; the command stops early and saves state"
+      },
+      {
+        "name": "timeout",
+        "type": "int",
+        "default": 3600,
+        "required": false,
+        "help": "Framework kill switch; must be greater than budget + 300"
+      },
+      {
+        "name": "concurrency",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "Parallel image downloads per gallery (1-8)"
+      },
+      {
+        "name": "retries",
+        "type": "int",
+        "default": 4,
+        "required": false,
+        "help": "Attempts per image with exponential backoff"
+      },
+      {
+        "name": "delay",
+        "type": "int",
+        "default": 5000,
+        "required": false,
+        "help": "Milliseconds between galleries"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 0,
+        "required": false,
+        "help": "Process at most N galleries (trial runs)"
+      },
+      {
+        "name": "state",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "State file (default <output>/.nh-sync.json)"
+      },
+      {
+        "name": "retry-failed",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Only retry books previously partial or failed"
+      },
+      {
+        "name": "refresh",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Re-enumerate favourites from page 1"
+      },
+      {
+        "name": "dry-run",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Enumerate and plan only; download nothing"
+      },
+      {
+        "name": "max-failures",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "Stop this run after N consecutive gallery failures"
+      }
+    ],
+    "columns": [
+      "done",
+      "partial",
+      "failed",
+      "pending",
+      "queued",
+      "synced_now",
+      "stopped",
+      "exit_code",
+      "elapsed_s",
+      "state_file",
+      "dir"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/download-all.js",
+    "sourceFile": "nhentai/download-all.js",
     "navigateBefore": "https://nhentai.net"
   },
   {
