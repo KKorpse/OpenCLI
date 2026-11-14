@@ -24377,6 +24377,551 @@
     "navigateBefore": "https://mubu.com"
   },
   {
+    "site": "nhentai",
+    "name": "download",
+    "description": "Download gallery images (and a metadata.json) to a local folder",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Gallery id or URL"
+      },
+      {
+        "name": "output",
+        "type": "str",
+        "default": "./nhentai",
+        "required": false,
+        "help": "Parent folder; images land in <output>/<gallery-id>/"
+      },
+      {
+        "name": "pages",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Page selection, e.g. \"1-5\" or \"1,3,9\"; empty means all"
+      },
+      {
+        "name": "proxy",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "HTTP proxy for image downloads; auto-detected from env / Windows settings"
+      },
+      {
+        "name": "overwrite",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Re-download files that already exist"
+      },
+      {
+        "name": "delay",
+        "type": "int",
+        "default": 120,
+        "required": false,
+        "help": "Milliseconds to wait between images"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "pages",
+      "saved",
+      "skipped",
+      "dir"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/download.js",
+    "sourceFile": "nhentai/download.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "favorites",
+    "description": "List the logged-in account's favourite galleries (reads the browser session)",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Favourites page (25 per page)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 25,
+        "required": false,
+        "help": "Max rows to print"
+      },
+      {
+        "name": "all",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Keep going through consecutive pages"
+      },
+      {
+        "name": "max-pages",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Page cap used with --all"
+      },
+      {
+        "name": "delay",
+        "type": "int",
+        "default": 5000,
+        "required": false,
+        "help": "Milliseconds to wait between page loads"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "page",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/favorites.js",
+    "sourceFile": "nhentai/favorites.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "gallery",
+    "description": "Show one nhentai gallery: title, artists, tags, page count, favorites",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Gallery id or https://nhentai.net/g/<id>/ URL"
+      },
+      {
+        "name": "full",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Also include category, english title, scanlator and cover"
+      }
+    ],
+    "columns": [
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "uploaded",
+      "artists",
+      "groups",
+      "parodies",
+      "characters",
+      "tags",
+      "languages",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/gallery.js",
+    "sourceFile": "nhentai/gallery.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "latest",
+    "description": "Newest nhentai galleries",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Result page (25 per page)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max rows to print"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/latest.js",
+    "sourceFile": "nhentai/latest.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "popular",
+    "description": "Currently popular nhentai galleries",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 5,
+        "required": false,
+        "help": "Max rows to print"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/popular.js",
+    "sourceFile": "nhentai/popular.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "random",
+    "description": "A random nhentai gallery",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [],
+    "columns": [
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "uploaded",
+      "artists",
+      "tags",
+      "languages",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/random.js",
+    "sourceFile": "nhentai/random.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "related",
+    "description": "Galleries related to a given nhentai gallery",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "target",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Gallery id or URL"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Max rows to print"
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/related.js",
+    "sourceFile": "nhentai/related.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "search",
+    "description": "Search nhentai galleries (free text plus tag/artist/language/pages/favorites filters)",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "query",
+        "type": "str",
+        "required": false,
+        "positional": true,
+        "help": "Free-text keywords; optional when filters are used"
+      },
+      {
+        "name": "tag",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Comma-separated tags to require, e.g. \"sole female,big breasts\""
+      },
+      {
+        "name": "exclude-tag",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Comma-separated tags to exclude"
+      },
+      {
+        "name": "artist",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Artist name (comma-separated for several)"
+      },
+      {
+        "name": "language",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Language, e.g. english / chinese / japanese"
+      },
+      {
+        "name": "pages",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Page-count filter, e.g. \">10\" or \"10-30\""
+      },
+      {
+        "name": "favorites",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Favourite-count filter, e.g. \">=100\""
+      },
+      {
+        "name": "uploaded",
+        "type": "str",
+        "default": "",
+        "required": false,
+        "help": "Upload window, e.g. \"<7d\" or \">1m\""
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Result page (25 per page)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max rows to print"
+      },
+      {
+        "name": "sort",
+        "type": "str",
+        "default": "date",
+        "required": false,
+        "help": "date | popular | popular-today | popular-week | popular-month",
+        "choices": [
+          "date",
+          "popular",
+          "popular-today",
+          "popular-week",
+          "popular-month"
+        ]
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/search.js",
+    "sourceFile": "nhentai/search.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "tag",
+    "description": "List galleries carrying one nhentai tag slug (e.g. sole-female, english, koari)",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "slug",
+        "type": "str",
+        "required": true,
+        "positional": true,
+        "help": "Tag slug, e.g. sole-female"
+      },
+      {
+        "name": "type",
+        "type": "str",
+        "default": "tag",
+        "required": false,
+        "help": "tag_type the slug belongs to",
+        "choices": [
+          "tag",
+          "category",
+          "parody",
+          "character",
+          "artist",
+          "group",
+          "language"
+        ]
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Result page (25 per page)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max rows to print"
+      },
+      {
+        "name": "sort",
+        "type": "str",
+        "default": "date",
+        "required": false,
+        "help": "Sort order",
+        "choices": [
+          "date",
+          "popular",
+          "popular-today",
+          "popular-week",
+          "popular-month"
+        ]
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "title",
+      "pages",
+      "favorites",
+      "thumbnail",
+      "url"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/tag.js",
+    "sourceFile": "nhentai/tag.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
+    "site": "nhentai",
+    "name": "tags",
+    "description": "Browse nhentai tags (tag, artist, character, parody, group, language, category)",
+    "access": "read",
+    "domain": "nhentai.net",
+    "strategy": "cookie",
+    "browser": true,
+    "args": [
+      {
+        "name": "type",
+        "type": "str",
+        "default": "tag",
+        "required": false,
+        "help": "tag_type",
+        "choices": [
+          "tag",
+          "category",
+          "parody",
+          "character",
+          "artist",
+          "group",
+          "language"
+        ]
+      },
+      {
+        "name": "page",
+        "type": "int",
+        "default": 1,
+        "required": false,
+        "help": "Result page (25 per page)"
+      },
+      {
+        "name": "limit",
+        "type": "int",
+        "default": 20,
+        "required": false,
+        "help": "Max rows to print"
+      },
+      {
+        "name": "sort",
+        "type": "str",
+        "default": "popular",
+        "required": false,
+        "help": "popular | name",
+        "choices": [
+          "popular",
+          "name"
+        ]
+      }
+    ],
+    "columns": [
+      "rank",
+      "id",
+      "name",
+      "type",
+      "count",
+      "slug"
+    ],
+    "type": "js",
+    "modulePath": "nhentai/tags.js",
+    "sourceFile": "nhentai/tags.js",
+    "navigateBefore": "https://nhentai.net"
+  },
+  {
     "site": "notebooklm",
     "name": "add-source",
     "description": "Add a URL, text, or local file source to an existing NotebookLM notebook",
