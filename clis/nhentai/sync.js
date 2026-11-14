@@ -5,10 +5,11 @@
  * atomic (tmp + rename): a process killed mid-write must never leave truncated
  * JSON behind.
  */
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { existsSync, readFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { basename, join } from 'node:path';
 import { collectFavoriteCards, favoritesUrl, inspectPage, writeJsonAtomic } from './api.js';
 import { listDownloadedPages } from './download-core.js';
+import { ID_FILE_RE, findIdFile, metadataPages, readJsonFile } from './naming.js';
 
 export const STATE_VERSION = 1;
 
@@ -52,22 +53,77 @@ export function saveState(statePath, state) {
   writeJsonAtomic(statePath, state);
 }
 
-/** Decide done / partial / pending for every tracked gallery by looking at disk. */
-export function planBooks(outDir, ids) {
-  const plan = new Map();
-  for (const id of ids) {
-    const dir = join(outDir, String(id));
-    const metaPath = join(dir, 'metadata.json');
-    let totalPages = null;
-    if (existsSync(metaPath)) {
-      try {
-        const meta = JSON.parse(readFileSync(metaPath, 'utf8'));
-        totalPages = Number(meta?.raw?.num_pages) || Number(meta?.gallery?.pages) || null;
-      } catch { /* keep null */ }
+/**
+ * Scan one level of `<outDir>` and map gallery id -> directory via `<id>.json`.
+ *
+ * Directory names are titles now, so the id cannot be derived from the path:
+ * the identity file is the only lookup key. Legacy id-named dirs that still hold
+ * `metadata.json` are indexed too, so an existing library is not re-downloaded.
+ */
+export function indexBooks(outDir) {
+  const map = new Map();
+  let entries = [];
+  try {
+    entries = readdirSync(outDir, { withFileTypes: true });
+  } catch {
+    return map;
+  }
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+    const dir = join(outDir, entry.name);
+    let idFile = null;
+    try {
+      for (const file of readdirSync(dir)) {
+        if (!ID_FILE_RE.test(file)) continue;
+        idFile = join(dir, file);
+        break;
+      }
+    } catch {
+      continue;
     }
-    const have = listDownloadedPages(dir).length;
+    if (idFile) {
+      const match = ID_FILE_RE.exec(basename(idFile));
+      map.set(match[1], { dir, meta: readJsonFile(idFile), idFile });
+      continue;
+    }
+    const legacy = join(dir, 'metadata.json');
+    if (existsSync(legacy)) {
+      const meta = readJsonFile(legacy);
+      const legacyId = String(meta?.raw?.id ?? meta?.gallery?.id ?? '');
+      if (legacyId) map.set(legacyId, { dir, meta, idFile: legacy });
+    }
+  }
+  return map;
+}
+
+/** Decide done / partial / pending for every tracked gallery by looking at disk. */
+export function planBooks(outDir, ids, state) {
+  const index = indexBooks(outDir);
+  const plan = new Map();
+
+  for (const rawId of ids) {
+    const id = String(rawId);
+    const tracked = state?.books?.[id];
+    const hit = index.get(id);
+
+    let dir = null;
+    let meta = null;
+    if (hit) {
+      dir = hit.dir;
+      meta = hit.meta;
+    } else if (tracked?.dir && existsSync(tracked.dir)) {
+      // The recorded path still holds this gallery's identity file: reuse it.
+      const idFile = findIdFile(tracked.dir, id);
+      if (idFile) {
+        dir = tracked.dir;
+        meta = readJsonFile(idFile);
+      }
+    }
+
+    const totalPages = metadataPages(meta);
+    const have = dir ? listDownloadedPages(dir).length : 0;
     const status = totalPages && have >= totalPages ? 'done' : have > 0 ? 'partial' : 'pending';
-    plan.set(id, { id, dir, totalPages, have, status });
+    plan.set(rawId, { id: rawId, dir, totalPages, have, status });
   }
   return plan;
 }

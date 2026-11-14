@@ -1,6 +1,7 @@
 import { cli, Strategy } from '@jackwener/opencli/registry';
 import { ArgumentError } from '@jackwener/opencli/errors';
 import { resolve, join } from 'node:path';
+import { ORIGIN } from './api.js';
 import { downloadGallery } from './download-core.js';
 import { enumerateFavorites, loadState, planBooks, saveState } from './sync.js';
 
@@ -26,6 +27,7 @@ cli({
     { name: 'retries', type: 'int', default: 4, help: 'Attempts per image with exponential backoff' },
     { name: 'delay', type: 'int', default: 5000, help: 'Milliseconds between galleries' },
     { name: 'limit', type: 'int', default: 0, help: 'Process at most N galleries (trial runs)' },
+    { name: 'folder-name', default: 'title', choices: ['title', 'id', 'title-id'], help: 'Folder naming: sanitised title (default), id, or title__id' },
     { name: 'state', default: '', help: 'State file (default <output>/.nh-sync.json)' },
     { name: 'retry-failed', type: 'bool', default: false, help: 'Only retry books previously partial or failed' },
     { name: 'refresh', type: 'bool', default: false, help: 'Re-enumerate favourites from page 1' },
@@ -60,6 +62,7 @@ cli({
     const dryRun = Boolean(kwargs['dry-run']);
     const refresh = Boolean(kwargs.refresh);
     const maxFailures = Math.max(1, Number(kwargs['max-failures']) || 3);
+    const folderName = String(kwargs['folder-name'] ?? 'title');
 
     const state = loadState(statePath);
     if (refresh) state.favorites = { next_page: 1, ids: [], complete: false };
@@ -85,7 +88,7 @@ cli({
     }
 
     // 2) Plan from disk: done / partial / pending.
-    const plan = planBooks(outDir, state.favorites.ids);
+    const plan = planBooks(outDir, state.favorites.ids, state);
     const countPlan = () => {
       const counts = { done: 0, partial: 0, failed: 0, pending: 0 };
       for (const book of plan.values()) {
@@ -155,11 +158,14 @@ cli({
       console.error(`[nhentai] ${book.id}: ${book.status}, ${book.have}/${book.totalPages ?? '?'} pages on disk`);
       let result = null;
       let lastError = null;
+      let stale = false;
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           result = await downloadGallery(page, {
             target: book.id,
             output: outDir,
+            dir: book.dir ?? undefined,
+            folderName,
             concurrency,
             retries,
             continueOnError: true,
@@ -171,12 +177,34 @@ cli({
         } catch (error) {
           lastError = error;
           const message = String(error?.message || error);
-          // The Browser Bridge occasionally hands us a stale page identity after a
-          // long run; one immediate retry costs nothing and avoids losing a book.
-          if (attempt > 0 || !TRANSIENT_PAGE_RE.test(message)) break;
-          console.error(`[nhentai] ${book.id}: transient browser error, retrying once — ${message.slice(0, 160)}`);
-          await sleep(1500);
+          // A stale page identity means the handle itself is dead, so retrying on
+          // the same object cannot work: navigate first to obtain a fresh handle.
+          if (attempt > 0 || !TRANSIENT_PAGE_RE.test(message)) {
+            stale = TRANSIENT_PAGE_RE.test(message);
+            break;
+          }
+          console.error(`[nhentai] ${book.id}: transient browser error, re-navigating and retrying — ${message.slice(0, 160)}`);
+          try {
+            await page.goto(ORIGIN);
+          } catch { /* retry below will surface a real error */ }
+          await sleep(500);
         }
+      }
+
+      if (!result && stale) {
+        state.books[book.id] = {
+          status: 'failed',
+          dir: book.dir ?? null,
+          pages: book.totalPages,
+          have: book.have,
+          failed: [],
+          error: String(lastError?.message || lastError).slice(0, 300),
+          updated_at: new Date().toISOString(),
+        };
+        save();
+        stopped = 'stale-page';
+        console.error(`[nhentai] ${book.id}: page identity is stale and did not recover — ending this run so a fresh process gets a new page handle`);
+        break;
       }
 
       if (result) {
@@ -184,6 +212,7 @@ cli({
         const status = result.failed.length || result.missing.length ? 'partial' : 'done';
         state.books[book.id] = {
           status,
+          dir: result.dir,
           pages: result.totalPages,
           have: result.onDisk.length,
           failed: result.failed.map((f) => f.number),
@@ -214,7 +243,7 @@ cli({
     }
 
     // 4) Recompute from disk and pick the exit code.
-    const finalPlan = planBooks(outDir, state.favorites.ids);
+    const finalPlan = planBooks(outDir, state.favorites.ids, state);
     const finalCounts = { done: 0, partial: 0, failed: 0, pending: 0 };
     for (const book of finalPlan.values()) {
       const tracked = state.books[book.id];
@@ -223,7 +252,8 @@ cli({
     }
 
     let exitCode = 0;
-    if (enumeration.incomplete) exitCode = 4;
+    if (stopped === 'stale-page') exitCode = 5;
+    else if (enumeration.incomplete) exitCode = 4;
     else if (finalCounts.partial || finalCounts.failed) exitCode = 2;
     else if (!nothingToRetry && finalCounts.pending > 0) exitCode = 3;
 

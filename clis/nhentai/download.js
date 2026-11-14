@@ -13,6 +13,7 @@ cli({
     { name: 'target', positional: true, required: true, help: 'Gallery id or URL' },
     { name: 'output', default: './nhentai', help: 'Parent folder; images land in <output>/<gallery-id>/' },
     { name: 'pages', default: '', help: 'Page selection, e.g. "1-5" or "1,3,9"; empty means all' },
+    { name: 'folder-name', default: 'title', choices: ['title', 'id', 'title-id'], help: 'Folder naming: sanitised title (default), id, or title__id' },
     { name: 'proxy', default: '', help: 'HTTP proxy for image downloads; auto-detected from env / Windows settings' },
     { name: 'timeout', type: 'int', default: 900, help: 'Seconds before this command gives up (default 900)' },
     { name: 'retries', type: 'int', default: 4, help: 'Attempts per image with exponential backoff' },
@@ -22,12 +23,13 @@ cli({
     { name: 'overwrite', type: 'bool', default: false, help: 'Re-download files that already exist' },
     { name: 'delay', type: 'int', default: 120, help: 'Milliseconds to wait between images' },
   ],
-  columns: ['id', 'title', 'pages', 'saved', 'skipped', 'failed_count', 'failed', 'dir'],
+  columns: ['id', 'title', 'pages', 'saved', 'skipped', 'failed_count', 'failed', 'folder', 'dir'],
   func: async (page, kwargs) => {
     const result = await downloadGallery(page, {
       target: kwargs.target,
       output: kwargs.output,
       pages: kwargs.pages,
+      folderName: kwargs['folder-name'],
       proxy: kwargs.proxy,
       retries: kwargs.retries,
       concurrency: kwargs.concurrency,
@@ -52,6 +54,7 @@ cli({
         skipped: result.skipped.length,
         failed_count: result.failed.length,
         failed: result.failed.map((f) => f.number),
+        folder: result.folder,
         dir: result.dir,
       },
     ];

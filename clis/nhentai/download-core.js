@@ -6,7 +6,7 @@
  * bounded concurrency, atomic writes, progress/errors artefacts and the result
  * object the commands report.
  */
-import { resolve, join, extname } from 'node:path';
+import { resolve, join, extname, basename } from 'node:path';
 import { existsSync, mkdirSync, appendFileSync, readdirSync, writeFileSync } from 'node:fs';
 import {
   nhGet,
@@ -21,6 +21,7 @@ import {
   imageUrl,
   galleryUrl,
 } from './api.js';
+import { resolveGalleryDir } from './naming.js';
 
 const IMAGE_FILE_RE = /^(\d+)\.(jpe?g|png|gif|webp)$/i;
 
@@ -43,7 +44,6 @@ export function listDownloadedPages(dir) {
 export async function downloadGallery(page, options = {}) {
   const startedAt = Date.now();
   const id = parseGalleryId(options.target);
-  const outDir = resolve(String(options.output ?? './nhentai'), String(id));
   const proxy = String(options.proxy ?? '').trim();
   const retries = Math.max(1, Number(options.retries) || 4);
   const concurrency = Math.min(8, Math.max(1, Number(options.concurrency) || 3));
@@ -54,6 +54,15 @@ export async function downloadGallery(page, options = {}) {
   const quiet = Boolean(options.quiet);
 
   const detail = await nhGet(page, `/api/v2/galleries/${id}`, `gallery ${id}`);
+  const title = detail?.title?.pretty || detail?.title?.english || detail?.title?.japanese || `gallery ${id}`;
+  // The folder name needs the title, so it can only be resolved after the fetch.
+  const outDir = resolveGalleryDir(String(options.output ?? './nhentai'), {
+    id,
+    title,
+    mode: String(options.folderName ?? 'title'),
+    dir: options.dir,
+  });
+
   const allPages = Array.isArray(detail?.pages) ? detail.pages : [];
   if (allPages.length === 0) throw new Error(`nhentai: gallery ${id} has no page list.`);
 
@@ -65,8 +74,9 @@ export async function downloadGallery(page, options = {}) {
   mkdirSync(outDir, { recursive: true });
   log(`[nhentai] gallery ${id}: ${selected.length}/${allPages.length} pages -> ${outDir}`);
 
-  // Metadata first: even a failed run leaves a reusable record.
-  writeJsonAtomic(join(outDir, 'metadata.json'), {
+  // The identity file is written before the first image: a half-downloaded
+  // gallery is still recognisable by `<id>.json` when planning the next run.
+  writeJsonAtomic(join(outDir, `${id}.json`), {
     source: galleryUrl(id),
     fetched_at: new Date().toISOString(),
     gallery: formatDetail(detail, { full: true }),
@@ -159,7 +169,7 @@ export async function downloadGallery(page, options = {}) {
   const onDisk = listDownloadedPages(outDir);
   return {
     id,
-    title: detail?.title?.pretty || detail?.title?.english || '(untitled)',
+    title,
     totalPages,
     selectedCount: selected.length,
     saved: saved.sort((a, b) => a - b),
@@ -168,6 +178,7 @@ export async function downloadGallery(page, options = {}) {
     onDisk,
     missing: selected.filter((n) => !onDisk.includes(n)),
     dir: outDir,
+    folder: basename(outDir),
     durationMs: Date.now() - startedAt,
   };
 }
