@@ -24414,6 +24414,34 @@
         "help": "HTTP proxy for image downloads; auto-detected from env / Windows settings"
       },
       {
+        "name": "retries",
+        "type": "int",
+        "default": 4,
+        "required": false,
+        "help": "Attempts per image with exponential backoff"
+      },
+      {
+        "name": "concurrency",
+        "type": "int",
+        "default": 3,
+        "required": false,
+        "help": "Parallel image downloads (1-8)"
+      },
+      {
+        "name": "continue-on-error",
+        "type": "bool",
+        "default": true,
+        "required": false,
+        "help": "Keep going when a page fails; false aborts on first failure"
+      },
+      {
+        "name": "max-failures",
+        "type": "int",
+        "default": 10,
+        "required": false,
+        "help": "Stop scheduling new pages after this many failures"
+      },
+      {
         "name": "overwrite",
         "type": "bool",
         "default": false,
@@ -24434,6 +24462,8 @@
       "pages",
       "saved",
       "skipped",
+      "failed_count",
+      "failed",
       "dir"
     ],
     "type": "js",

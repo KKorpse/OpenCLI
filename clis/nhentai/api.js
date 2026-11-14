@@ -15,7 +15,7 @@ import https from 'node:https';
 import tls from 'node:tls';
 import net from 'node:net';
 import { execSync } from 'node:child_process';
-import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, renameSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { CommandExecutionError, EmptyResultError } from '@jackwener/opencli/errors';
 
@@ -277,16 +277,74 @@ export function detectProxy() {
 
 function normalizeProxy(value) {
   if (/^[a-z0-9]+:\/\//i.test(value)) {
-    if (/^socks/i.test(value)) throw new CommandExecutionError('SOCKS proxies are not supported by the downloader.', 'Point --proxy at the HTTP/mixed port (e.g. http://127.0.0.1:7890).');
+    if (/^socks/i.test(value)) {
+      throw new CommandExecutionError(
+        'SOCKS proxies are not supported by the image downloader.',
+        'Clash exposes an HTTP port alongside the SOCKS one: point --proxy at the mixed/HTTP port (e.g. http://127.0.0.1:7890).',
+      );
+    }
     return value.replace(/\/$/, '');
   }
   const first = value.split(';')[0].replace(/^[a-z]+=/i, '');
   return `http://${first}`;
 }
 
+/** NO_PROXY / no_proxy entries: "*", "host", ".suffix", "host:port". */
+function noProxyEntries() {
+  const raw = process.env.NO_PROXY || process.env.no_proxy || '';
+  return String(raw)
+    .split(',')
+    .map((s) => s.trim().toLowerCase())
+    .filter(Boolean);
+}
+
+export function isProxyBypassed(url) {
+  const entries = noProxyEntries();
+  if (entries.length === 0) return false;
+  if (entries.includes('*')) return true;
+  let host = '';
+  let port = '';
+  try {
+    const u = new URL(url);
+    host = u.hostname.toLowerCase();
+    port = u.port || (u.protocol === 'https:' ? '443' : '80');
+  } catch {
+    return false;
+  }
+  return entries.some((entry) => {
+    const [hostPart, portPart] = entry.split(':');
+    const hostMatches = hostPart === host || (hostPart.startsWith('.') && host.endsWith(hostPart)) || host.endsWith(`.${hostPart}`);
+    if (!hostMatches) return false;
+    return !portPart || portPart === port;
+  });
+}
+
+/**
+ * Proxy to use for one image URL: an explicit --proxy wins, otherwise the
+ * detected one, unless NO_PROXY says this host must go direct.
+ */
+export function resolveProxyFor(url, explicit) {
+  const chosen = String(explicit ?? '').trim() || detectProxy();
+  if (!chosen) return null;
+  const normalized = normalizeProxy(chosen);
+  return isProxyBypassed(url) ? null : normalized;
+}
+
+function httpError(code, message) {
+  const error = new Error(message);
+  error.code = code;
+  return error;
+}
+
 function parseHttpResponse(buf) {
+  if (!buf || buf.length === 0) {
+    throw httpError('EMPTY_RESPONSE', 'empty response (connection closed before headers)');
+  }
   const split = buf.indexOf('\r\n\r\n');
-  if (split < 0) throw new Error('malformed HTTP response from image server');
+  if (split < 0) {
+    const preview = buf.subarray(0, 80).toString('latin1').replace(/[^\x20-\x7e]/g, '.');
+    throw httpError('MALFORMED_RESPONSE', `malformed HTTP response (no header terminator); first bytes: "${preview}"`);
+  }
   const head = buf.subarray(0, split).toString('latin1');
   const lines = head.split('\r\n');
   const status = Number((lines[0] || '').split(' ')[1] || 0);
@@ -296,10 +354,17 @@ function parseHttpResponse(buf) {
     if (i > 0) headers[line.slice(0, i).trim().toLowerCase()] = line.slice(i + 1).trim();
   }
   let body = buf.subarray(split + 4);
+  const declared = Number(headers['content-length'] || 0);
   if ((headers['transfer-encoding'] || '').toLowerCase().includes('chunked')) {
     body = decodeChunked(body);
-  } else if (headers['content-length']) {
-    body = body.subarray(0, Number(headers['content-length']));
+  } else if (declared > 0) {
+    if (body.length < declared) {
+      throw httpError('TRUNCATED_BODY', `truncated body: got ${body.length} of ${declared} bytes`);
+    }
+    body = body.subarray(0, declared);
+  }
+  if (body.length === 0) {
+    throw httpError('EMPTY_BODY', `empty body (HTTP ${status}, ${declared || 'no'} content-length declared)`);
   }
   return { status, headers, body };
 }
@@ -383,6 +448,10 @@ function requestViaProxy(url, proxy, timeoutMs) {
         if (split < 0) return;
         raw.removeListener('data', onProxyData);
         raw.pause();
+        // Any bytes the proxy sent after the CONNECT headers already belong to
+        // the TLS stream; hand them back before the socket is wrapped.
+        const rest = handshake.subarray(split + 4);
+        if (rest.length) raw.unshift(rest);
 
         const status = Number((handshake.subarray(0, split).toString('latin1').split('\r\n')[0] || '').split(' ')[1] || 0);
         if (status !== 200) {
@@ -422,35 +491,108 @@ function requestViaProxy(url, proxy, timeoutMs) {
   });
 }
 
+const RETRYABLE_CODES = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ETIMEDOUT',
+  'EPIPE',
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'UND_ERR_SOCKET',
+  'EMPTY_RESPONSE',
+  'EMPTY_BODY',
+  'TRUNCATED_BODY',
+  'MALFORMED_RESPONSE',
+]);
+
+function isRetryable(error, status) {
+  if (status === 404) return false;
+  if (status === 429 || (status >= 500 && status < 600)) return true;
+  if (!error) return false;
+  if (RETRYABLE_CODES.has(error.code)) return true;
+  return /socket hang up|timed? ?out|ECONNRESET|EPIPE|empty response|truncated|malformed HTTP/i.test(String(error.message || error));
+}
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
 /**
- * Download one binary asset. Tries the proxy first when one is configured,
- * then falls back to a direct connection.
+ * Download one binary asset.
+ *
+ * A single transient proxy hiccup must not fail a 148-page download, so the
+ * attempts are generous and backed off exponentially (1s, 2s, 4s, 8s + jitter).
+ * Each attempt tries the proxy first and then a direct connection.
  */
-export async function downloadBinary(url, proxy, { attempts = 2, timeoutMs = 30000 } = {}) {
+export async function downloadBinary(url, proxy, { retries = 4, timeoutMs = 30000 } = {}) {
   const candidates = proxy ? ['proxy', 'direct'] : ['direct'];
+  const attempts = Math.max(1, Number(retries) || 1);
   const failures = [];
+
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     for (const mode of candidates) {
+      let status = 0;
       try {
         const res = mode === 'proxy' ? await requestViaProxy(url, proxy, timeoutMs) : await requestDirect(url, timeoutMs);
-        if (res.status >= 200 && res.status < 300 && res.body?.length) return res.body;
-        failures.push(`${mode}: HTTP ${res.status}`);
-        if (res.status === 404) {
+        status = res.status;
+        if (status >= 200 && status < 300 && res.body?.length) return res.body;
+        failures.push(`${mode}: HTTP ${status}`);
+        if (status === 404) {
           throw new CommandExecutionError(`nhentai: image not found (HTTP 404) — ${url}`, 'The gallery may have been removed from the image CDN.');
         }
       } catch (error) {
         if (error instanceof CommandExecutionError) throw error;
-        const message = String(error?.message || error);
-        failures.push(`${mode}: ${message}`);
+        failures.push(`${mode}: ${String(error?.message || error)}`);
+        if (!isRetryable(error, status)) throw classifyDownloadFailure(url, failures);
       }
     }
-    if (failures.length && attempt + 1 < attempts) await new Promise((r) => setTimeout(r, 500 * (attempt + 1)));
+    if (attempt + 1 < attempts) {
+      const backoff = Math.min(1000 * 2 ** attempt, 8000) + Math.floor(Math.random() * 250);
+      await sleep(backoff);
+    }
   }
-  const hint = failures.length ? [...new Set(failures)].join(' | ') : 'unknown error';
-  throw new CommandExecutionError(
+  throw classifyDownloadFailure(url, failures);
+}
+
+function classifyDownloadFailure(url, failures) {
+  const reasons = [...new Set(failures)];
+  const hint = reasons.length ? reasons.join(' | ') : 'unknown error';
+  return new CommandExecutionError(
     `nhentai: failed to download ${url}`,
-    `${hint}. If you are behind a proxy, pass --proxy http://127.0.0.1:7890.`,
+    `${hint}. Retried automatically; if this repeats, check the proxy (--proxy http://127.0.0.1:7890) or NO_PROXY.`,
   );
+}
+
+const IMAGE_SIGNATURES = {
+  '.jpg': [[0xff, 0xd8, 0xff]],
+  '.jpeg': [[0xff, 0xd8, 0xff]],
+  '.png': [[0x89, 0x50, 0x4e, 0x47]],
+  '.gif': [[0x47, 0x49, 0x46, 0x38]],
+  '.webp': [[0x52, 0x49, 0x46, 0x46]],
+};
+
+/** Reject HTML error pages and truncated files before they are written to disk. */
+export function assertImageData(buffer, ext, url) {
+  const key = String(ext || '').toLowerCase();
+  const signatures = IMAGE_SIGNATURES[key];
+  if (!signatures) return;
+  const matches = signatures.some((sig) => sig.every((byte, i) => buffer[i] === byte));
+  if (!matches) {
+    const head = buffer.subarray(0, 12).toString('hex');
+    throw new CommandExecutionError(
+      `nhentai: ${url} did not return ${key} image data`,
+      `First bytes: ${head}. This usually means the proxy/CDN served an HTML error page.`,
+    );
+  }
+  if (key === '.webp' && buffer.subarray(8, 12).toString('latin1') !== 'WEBP') {
+    throw new CommandExecutionError(`nhentai: ${url} is not a valid WebP file`, 'RIFF header matched but the WEBP marker is missing.');
+  }
+}
+
+/** Write through a .part file so an interrupted download never leaves a broken image. */
+export function saveBinaryAtomic(filePath, buffer) {
+  mkdirSync(dirname(filePath), { recursive: true });
+  const part = `${filePath}.part`;
+  writeFileSync(part, buffer);
+  renameSync(part, filePath);
 }
 
 export function writeBinary(filePath, buffer) {
