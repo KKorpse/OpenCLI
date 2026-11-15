@@ -576,30 +576,35 @@ function classifyDownloadFailure(url, failures) {
   );
 }
 
-const IMAGE_SIGNATURES = {
-  '.jpg': [[0xff, 0xd8, 0xff]],
-  '.jpeg': [[0xff, 0xd8, 0xff]],
-  '.png': [[0x89, 0x50, 0x4e, 0x47]],
-  '.gif': [[0x47, 0x49, 0x46, 0x38]],
-  '.webp': [[0x52, 0x49, 0x46, 0x46]],
-};
-
-/** Reject HTML error pages and truncated files before they are written to disk. */
-export function assertImageData(buffer, ext, url) {
-  const key = String(ext || '').toLowerCase();
-  const signatures = IMAGE_SIGNATURES[key];
-  if (!signatures) return;
-  const matches = signatures.some((sig) => sig.every((byte, i) => buffer[i] === byte));
-  if (!matches) {
-    const head = buffer.subarray(0, 12).toString('hex');
+/**
+ * Identify image bytes by content, never by the URL extension.
+ *
+ * nhentai's CDN mixes formats: a `path` ending in `.png` frequently serves JPEG
+ * bytes (the API extension is not authoritative). Sniffing the magic bytes keeps
+ * those pages from being rejected and lets the caller save the real extension.
+ */
+export function detectImageExt(buffer, url) {
+  const size = buffer?.length ?? 0;
+  if (size < 12) {
     throw new CommandExecutionError(
-      `nhentai: ${url} did not return ${key} image data`,
-      `First bytes: ${head}. This usually means the proxy/CDN served an HTML error page.`,
+      `nhentai: ${url} returned ${size} byte(s) — too short to be image data`,
+      'The proxy or CDN closed the connection before the image was complete.',
     );
   }
-  if (key === '.webp' && buffer.subarray(8, 12).toString('latin1') !== 'WEBP') {
-    throw new CommandExecutionError(`nhentai: ${url} is not a valid WebP file`, 'RIFF header matched but the WEBP marker is missing.');
-  }
+  const b = buffer;
+  if (b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff) return '.jpg';
+  if (b[0] === 0x89 && b[1] === 0x50 && b[2] === 0x4e && b[3] === 0x47) return '.png';
+  if (b.subarray(0, 4).toString('latin1') === 'GIF8') return '.gif';
+  if (b.subarray(0, 4).toString('latin1') === 'RIFF' && b.subarray(8, 12).toString('latin1') === 'WEBP') return '.webp';
+  throw new CommandExecutionError(
+    `nhentai: ${url} is not image data`,
+    `First bytes: ${b.subarray(0, 12).toString('hex')}. This usually means the proxy/CDN served an HTML error page.`,
+  );
+}
+
+/** Backwards-compatible wrapper: accept only when the bytes are image data. */
+export function assertImageData(buffer, url) {
+  detectImageExt(buffer, url);
 }
 
 /** Write through a .part file so an interrupted download never leaves a broken image. */

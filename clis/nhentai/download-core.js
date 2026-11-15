@@ -7,7 +7,7 @@
  * object the commands report.
  */
 import { resolve, join, extname, basename } from 'node:path';
-import { existsSync, mkdirSync, appendFileSync, readdirSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, appendFileSync, readdirSync, writeFileSync, unlinkSync } from 'node:fs';
 import {
   nhGet,
   parseGalleryId,
@@ -15,7 +15,7 @@ import {
   formatDetail,
   resolveProxyFor,
   downloadBinary,
-  assertImageData,
+  detectImageExt,
   saveBinaryAtomic,
   writeJsonAtomic,
   imageUrl,
@@ -24,18 +24,33 @@ import {
 import { resolveGalleryDir } from './naming.js';
 
 const IMAGE_FILE_RE = /^(\d+)\.(jpe?g|png|gif|webp)$/i;
+const IMAGE_EXTS = ['.jpg', '.jpeg', '.png', '.gif', '.webp'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Page numbers that already exist as image files in `dir`. */
+/** Keep exactly one file per page: drop a stale sibling with another extension. */
+function removeOtherFormats(dir, number, keepExt) {
+  const stem = String(number).padStart(3, '0');
+  for (const ext of IMAGE_EXTS) {
+    if (ext === keepExt) continue;
+    const candidate = join(dir, `${stem}${ext}`);
+    if (!existsSync(candidate)) continue;
+    try {
+      unlinkSync(candidate);
+    } catch { /* best effort */ }
+  }
+}
+
+/** Page numbers that already exist as image files in `dir` (unique per page). */
 export function listDownloadedPages(dir) {
   if (!existsSync(dir)) return [];
   try {
-    return readdirSync(dir)
-      .map((name) => IMAGE_FILE_RE.exec(name))
-      .filter(Boolean)
-      .map((match) => Number(match[1]))
-      .sort((a, b) => a - b);
+    const numbers = new Set();
+    for (const name of readdirSync(dir)) {
+      const match = IMAGE_FILE_RE.exec(name);
+      if (match) numbers.add(Number(match[1]));
+    }
+    return [...numbers].sort((a, b) => a - b);
   } catch {
     return [];
   }
@@ -94,14 +109,16 @@ export async function downloadGallery(page, options = {}) {
       log(`[nhentai] page ${number}: missing path, skipped`);
       continue;
     }
-    const ext = extname(pageInfo.path) || '.jpg';
-    tasks.push({ number, ext, url: imageUrl(pageInfo.path), file: join(outDir, `${String(number).padStart(3, '0')}${ext}`) });
+    // The API extension is only a hint: the CDN serves mixed formats.
+    const declaredExt = extname(pageInfo.path) || '.jpg';
+    tasks.push({ number, declaredExt, url: imageUrl(pageInfo.path) });
   }
 
+  const alreadyOnDisk = new Set(listDownloadedPages(outDir));
   const skipped = [];
   const pending = [];
   for (const task of tasks) {
-    if (!overwrite && existsSync(task.file)) skipped.push(task.number);
+    if (!overwrite && alreadyOnDisk.has(task.number)) skipped.push(task.number);
     else pending.push(task);
   }
 
@@ -135,11 +152,13 @@ export async function downloadGallery(page, options = {}) {
       try {
         const proxyForTask = resolveProxyFor(task.url, proxy);
         const body = await downloadBinary(task.url, proxyForTask, { retries });
-        assertImageData(body, task.ext, task.url);
-        saveBinaryAtomic(task.file, body);
+        const actualExt = detectImageExt(body, task.url);
+        const finalFile = join(outDir, `${String(task.number).padStart(3, '0')}${actualExt}`);
+        removeOtherFormats(outDir, task.number, actualExt);
+        saveBinaryAtomic(finalFile, body);
         saved.push(task.number);
         const done = saved.length + failed.length + skipped.length;
-        log(`[nhentai] ${done}/${tasks.length} page ${task.number}: ${(body.length / 1024).toFixed(0)} KB`);
+        log(`[nhentai] ${done}/${tasks.length} page ${task.number}: ${(body.length / 1024).toFixed(0)} KB (${actualExt})`);
       } catch (error) {
         const message = String(error?.message || error).slice(0, 300);
         failed.push({ number: task.number, error: message });
