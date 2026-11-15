@@ -20,7 +20,7 @@ cli({
   browser: true,
   args: [
     { name: 'output', required: true, help: 'Destination folder (required, e.g. D:\\nh)' },
-    { name: 'max-favorites-pages', type: 'int', default: 20, help: 'How many favourites pages to enumerate (25 per page)' },
+    { name: 'max-favorites-pages', type: 'int', default: 100, help: 'Safety cap on favourites pages to enumerate (25 per page; the walk stops at an empty page first)' },
     { name: 'budget', type: 'int', default: 3000, help: 'Seconds of work for this run; the command stops early and saves state' },
     { name: 'timeout', type: 'int', default: 3600, help: 'Framework kill switch; must be greater than budget + 300' },
     { name: 'concurrency', type: 'int', default: 3, help: 'Parallel image downloads per gallery (1-8)' },
@@ -53,7 +53,7 @@ cli({
 
     const outDir = resolve(outputArg);
     const statePath = String(kwargs.state ?? '').trim() ? resolve(String(kwargs.state)) : join(outDir, '.nh-sync.json');
-    const maxPages = Math.max(1, Number(kwargs['max-favorites-pages']) || 20);
+    const maxPages = Math.max(1, Number(kwargs['max-favorites-pages']) || 100);
     const concurrency = Math.min(8, Math.max(1, Number(kwargs.concurrency) || 3));
     const retries = Math.max(1, Number(kwargs.retries) || 4);
     const bookDelay = Math.max(0, Number(kwargs.delay) || 0);
@@ -85,6 +85,12 @@ cli({
       enumeration = await enumerateFavorites(page, state, { maxPages, save });
     } else {
       console.error(`[nhentai] favourites already enumerated (${state.favorites.ids.length} ids)`);
+    }
+    if (enumeration.capped) {
+      console.error(
+        `[nhentai] WARNING: favourite enumeration stopped at the ${maxPages}-page cap; ` +
+          'the list may be truncated. Raise --max-favorites-pages (25 galleries per page).',
+      );
     }
 
     // 2) Plan from disk: done / partial / pending.
@@ -118,6 +124,7 @@ cli({
       synced_now: 0,
       stopped: 'dry-run',
       exit_code: 0,
+      capped: Boolean(enumeration.capped),
       elapsed_s: elapsedS(),
       state_file: statePath,
       dir: outDir,
@@ -254,6 +261,7 @@ cli({
     let exitCode = 0;
     if (stopped === 'stale-page') exitCode = 5;
     else if (enumeration.incomplete) exitCode = 4;
+    else if (enumeration.capped) exitCode = 6;
     else if (finalCounts.partial || finalCounts.failed) exitCode = 2;
     else if (!nothingToRetry && finalCounts.pending > 0) exitCode = 3;
 

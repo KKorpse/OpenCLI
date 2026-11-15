@@ -24407,6 +24407,18 @@
         "help": "Page selection, e.g. \"1-5\" or \"1,3,9\"; empty means all"
       },
       {
+        "name": "folder-name",
+        "type": "str",
+        "default": "title",
+        "required": false,
+        "help": "Folder naming: sanitised title (default), id, or title__id",
+        "choices": [
+          "title",
+          "id",
+          "title-id"
+        ]
+      },
+      {
         "name": "proxy",
         "type": "str",
         "default": "",
@@ -24471,6 +24483,7 @@
       "skipped",
       "failed_count",
       "failed",
+      "folder",
       "dir"
     ],
     "type": "js",
@@ -24496,9 +24509,9 @@
       {
         "name": "max-favorites-pages",
         "type": "int",
-        "default": 20,
+        "default": 100,
         "required": false,
-        "help": "How many favourites pages to enumerate (25 per page)"
+        "help": "Safety cap on favourites pages to enumerate (25 per page; the walk stops at an empty page first)"
       },
       {
         "name": "budget",
@@ -24541,6 +24554,18 @@
         "default": 0,
         "required": false,
         "help": "Process at most N galleries (trial runs)"
+      },
+      {
+        "name": "folder-name",
+        "type": "str",
+        "default": "title",
+        "required": false,
+        "help": "Folder naming: sanitised title (default), id, or title__id",
+        "choices": [
+          "title",
+          "id",
+          "title-id"
+        ]
       },
       {
         "name": "state",
@@ -24629,9 +24654,9 @@
       {
         "name": "max-pages",
         "type": "int",
-        "default": 20,
+        "default": 100,
         "required": false,
-        "help": "Page cap used with --all"
+        "help": "Safety cap on pages walked with --all (25 galleries per page)"
       },
       {
         "name": "delay",

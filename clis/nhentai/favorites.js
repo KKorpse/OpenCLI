@@ -77,7 +77,7 @@ cli({
     { name: 'page', type: 'int', default: 1, help: 'Favourites page (25 per page)' },
     { name: 'limit', type: 'int', default: 25, help: 'Max rows to print' },
     { name: 'all', type: 'bool', default: false, help: 'Keep going through consecutive pages' },
-    { name: 'max-pages', type: 'int', default: 20, help: 'Page cap used with --all' },
+    { name: 'max-pages', type: 'int', default: 100, help: 'Safety cap on pages walked with --all (25 galleries per page)' },
     { name: 'delay', type: 'int', default: 5000, help: 'Milliseconds to wait between page loads' },
   ],
   columns: ['rank', 'id', 'title', 'page', 'thumbnail', 'url'],
@@ -86,11 +86,12 @@ cli({
     const limit = Math.max(1, Number(kwargs.limit) || 25);
     const walk = Boolean(kwargs.all);
     const delay = Math.max(0, Number(kwargs.delay) || 0);
-    const maxPages = Math.max(1, Number(kwargs['max-pages']) || 20);
+    const maxPages = Math.max(1, Number(kwargs['max-pages']) || 100);
     const lastPage = startPage + (walk ? maxPages : 1) - 1;
 
     const rows = [];
     let sawCards = false;
+    let truncated = false;
 
     for (let pageNo = startPage; pageNo <= lastPage; pageNo += 1) {
       let snapshot;
@@ -145,7 +146,15 @@ cli({
 
       const hasNext = snapshot.hrefs.some((href) => href.includes(`page=${pageNo + 1}`));
       if (!hasNext) break;
+      if (pageNo === lastPage) truncated = walk;
       if (delay) await pause(page, delay / 1000);
+    }
+
+    if (truncated) {
+      console.error(
+        `[nhentai] WARNING: stopped at the ${maxPages}-page cap; more favourites exist. ` +
+          'Raise --max-pages (25 galleries per page).',
+      );
     }
 
     if (!sawCards) {
