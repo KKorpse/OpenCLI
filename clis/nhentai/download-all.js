@@ -134,7 +134,10 @@ cli({
     if (dryRun) {
       process.removeListener('SIGINT', onSigint);
       console.error(`[nhentai] dry run: ${queue.length} of ${state.favorites.ids.length} galleries need work`);
-      return [row({ stopped: 'dry-run', synced_now: 0 })];
+      // A truncated favourites list must not look like a clean dry run.
+      const dryCode = enumeration.incomplete ? 4 : enumeration.capped ? 6 : 0;
+      if (dryCode) process.exitCode = dryCode;
+      return [row({ stopped: 'dry-run', synced_now: 0, exit_code: dryCode })];
     }
 
     // 3) Download within the budget, persisting state after every gallery.

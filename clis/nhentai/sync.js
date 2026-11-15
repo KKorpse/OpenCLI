@@ -137,7 +137,7 @@ export function planBooks(outDir, ids, state) {
  * favourites" — the bug that made a 20-page account look empty.
  */
 export async function enumerateFavorites(page, state, options = {}) {
-  const maxPages = Math.max(1, Number(options.maxPages) || 20);
+  const maxPages = Math.max(1, Number(options.maxPages) || 100);
   const save = options.save;
   const retries = Math.max(0, Number(options.retries ?? 3));
   const backoffMs = Math.max(1000, Number(options.backoffMs) || 20000);
@@ -207,10 +207,10 @@ export async function enumerateFavorites(page, state, options = {}) {
     if (pageNo <= maxPages && delayMs) await sleep(delayMs);
   }
 
-  // Capped by --max-favorites-pages: mark the enumeration complete so the next run
-  // does not log "enumerating from page 21 (max 20)" and stall on an empty loop.
-  // --refresh still forces a full re-enumeration.
-  state.favorites.complete = true;
+  // Capped by --max-favorites-pages: this is NOT the end of the list. Keep
+  // `complete` false so the next run resumes from `next_page` (and raising the
+  // cap just continues), and record the flag so callers can surface it.
+  state.favorites.complete = false;
   state.favorites.capped = true;
   state.favorites.next_page = maxPages + 1;
   save?.();
