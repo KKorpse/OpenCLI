@@ -24601,6 +24601,13 @@
         "default": 3,
         "required": false,
         "help": "Stop this run after N consecutive gallery failures"
+      },
+      {
+        "name": "oldest-first",
+        "type": "bool",
+        "default": false,
+        "required": false,
+        "help": "Process originally-favourited (oldest) galleries first, so the newest favourite ends up with the newest mtime"
       }
     ],
     "columns": [

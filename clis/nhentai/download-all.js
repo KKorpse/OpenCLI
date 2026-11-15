@@ -33,6 +33,7 @@ cli({
     { name: 'refresh', type: 'bool', default: false, help: 'Re-enumerate favourites from page 1' },
     { name: 'dry-run', type: 'bool', default: false, help: 'Enumerate and plan only; download nothing' },
     { name: 'max-failures', type: 'int', default: 3, help: 'Stop this run after N consecutive gallery failures' },
+    { name: 'oldest-first', type: 'bool', default: false, help: 'Process originally-favourited (oldest) galleries first, so the newest favourite ends up with the newest mtime' },
   ],
   columns: ['done', 'partial', 'failed', 'pending', 'queued', 'synced_now', 'stopped', 'exit_code', 'elapsed_s', 'state_file', 'dir'],
   func: async (page, kwargs) => {
@@ -62,6 +63,7 @@ cli({
     const dryRun = Boolean(kwargs['dry-run']);
     const refresh = Boolean(kwargs.refresh);
     const maxFailures = Math.max(1, Number(kwargs['max-failures']) || 3);
+    const oldestFirst = Boolean(kwargs['oldest-first']);
     const folderName = String(kwargs['folder-name'] ?? 'title');
 
     const state = loadState(statePath);
@@ -113,6 +115,9 @@ cli({
         return book.status === 'partial' || tracked?.status === 'partial' || tracked?.status === 'failed';
       });
     }
+    // Favourites are enumerated newest-first, so reversing yields oldest-first:
+    // the newest favourite is downloaded last and therefore keeps the newest mtime.
+    if (oldestFirst) queue.reverse();
     if (limit > 0) queue = queue.slice(0, limit);
 
     const row = (extra = {}) => ({
